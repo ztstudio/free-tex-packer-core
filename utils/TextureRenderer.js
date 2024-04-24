@@ -1,8 +1,8 @@
-let Jimp = require("jimp");
+let sharp = require("sharp");
 
 class TextureRenderer {
-    
-    constructor(data, options={}, callback) {
+
+    constructor(data, options = {}, callback) {
         this.buffer = null;
         this.data = data;
 
@@ -10,17 +10,17 @@ class TextureRenderer {
 
         this.width = 0;
         this.height = 0;
-        
+
         this.render(data, options);
     }
 
-    static getSize(data, options={}) {
+    static getSize(data, options = {}) {
         let width = options.width || 0;
         let height = options.height || 0;
         let padding = options.padding || 0;
         let extrude = options.extrude || 0;
 
-        if(!options.fixedSize) {
+        if (!options.fixedSize) {
             width = 0;
             height = 0;
 
@@ -29,7 +29,7 @@ class TextureRenderer {
                 let w = item.frame.x + item.frame.w;
                 let h = item.frame.y + item.frame.h;
 
-                if(item.rotated) {
+                if (item.rotated) {
                     w = item.frame.x + item.frame.h;
                     h = item.frame.y + item.frame.w;
                 }
@@ -47,14 +47,14 @@ class TextureRenderer {
         }
 
         if (options.powerOfTwo) {
-            let sw = Math.round(Math.log(width)/Math.log(2));
-            let sh = Math.round(Math.log(height)/Math.log(2));
+            let sw = Math.round(Math.log(width) / Math.log(2));
+            let sh = Math.round(Math.log(height) / Math.log(2));
 
             let pw = Math.pow(2, sw);
             let ph = Math.pow(2, sh);
 
-            if(pw < width) pw = Math.pow(2, sw + 1);
-            if(ph < height) ph = Math.pow(2, sh + 1);
+            if (pw < width) pw = Math.pow(2, sw + 1);
+            if (ph < height) ph = Math.pow(2, sh + 1);
 
             width = pw;
             height = ph;
@@ -62,111 +62,66 @@ class TextureRenderer {
 
         return { width, height };
     }
-    
-    render(data, options={}) {
+
+    async render(data, options = {}) {
         let { width, height } = TextureRenderer.getSize(data, options);
 
         this.width = width;
         this.height = height;
 
-        new Jimp(width, height, 0x0, (err, image) => {
-            this.buffer = image;
+        let image = sharp({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } });
 
-            for(let item of data) {
-                this.renderItem(item, options);
-            }
-            
-            let filter = new options.filter();
-            filter.apply(image);
+        let subImages = [];
+        for (let item of data) {
+            let sub = await this.renderItem(item, options);
+            if (sub) subImages.push(sub);
+        }
+        image.composite(subImages);
 
-            if(options.scale && options.scale !== 1) {
-                let scaleMethod = Jimp.RESIZE_BILINEAR;
+        // let filter = new options.filter();
+        // filter.apply(image);
 
-                if(options.scaleMethod === "NEAREST_NEIGHBOR") scaleMethod = Jimp.RESIZE_NEAREST_NEIGHBOR;
-                if(options.scaleMethod === "BICUBIC") scaleMethod = Jimp.RESIZE_BICUBIC;
-                if(options.scaleMethod === "HERMITE") scaleMethod = Jimp.RESIZE_HERMITE;
-                if(options.scaleMethod === "BEZIER") scaleMethod = Jimp.RESIZE_BEZIER;
+        let buffer = await image.png().toBuffer();
 
-                image.resize(Math.round(width * options.scale) || 1, Math.round(height * options.scale) || 1, scaleMethod);
-            }
+        if (options.scale && options.scale !== 1) {
+            let scaleMethod = "mitchell";
+            if (options.scaleMethod === "NEAREST_NEIGHBOR") scaleMethod = "nearest";
+            if (options.scaleMethod === "BICUBIC") scaleMethod = "cubic";
+            if (options.scaleMethod === "HERMITE") scaleMethod = "lanczos2";
+            if (options.scaleMethod === "BEZIER") scaleMethod = "lanczos3";
+            buffer = await sharp(buffer).resize(Math.round(width * options.scale) || 1, Math.round(height * options.scale) || 1, scaleMethod).toBuffer();
+        }
+        this.buffer = buffer;
 
-            if(this.callback) this.callback(this);
-        });
+        if (this.callback) this.callback(this);
     }
-    
-    renderItem(item, options) {
-        if(!item.skipRender) {
 
-            let img = item.image;
+    async renderItem(item, options) {
+        if (!item.skipRender) {
+            let input = item.image;
+            let left = item.frame.x;
+            let top = item.frame.y;
+            let width = item.frame.w;
+            let height = item.frame.h;
 
-            let dx = item.frame.x;
-            let dy = item.frame.y;
-            let sx = item.spriteSourceSize.x;
-            let sy = item.spriteSourceSize.y;
-            let sw = item.spriteSourceSize.w;
-            let sh = item.spriteSourceSize.h;
-            let ow = item.sourceSize.w;
-            let oh = item.sourceSize.h;
-
-            if (item.rotated) {
-                img = img.clone();
-                img.rotate(90);
-
-                sx = item.sourceSize.h - item.spriteSourceSize.h - item.spriteSourceSize.y;
-                sy = item.spriteSourceSize.x;
-                sw = item.spriteSourceSize.h;
-                sh = item.spriteSourceSize.w;
-                ow = item.sourceSize.h;
-                oh = item.sourceSize.w;
+            if (options.extrude) {
+                pixel = options.extrude;
+                let img = sharp(input, { raw: { width, height, channels: 4 } }).extend({ top: pixel, bottom: pixel, left: pixel, right: pixel, extendWith: "copy" });
+                left -= options.extrude;
+                top -= options.extrude;
+                width += options.extrude * 2;
+                height += options.extrude * 2;
+                if (options.rotated) {
+                    img.rotate(90);
+                    [width, height] = [height, width];
+                }
+                input = await img.toBuffer();
+            } else if (item.rotated) {
+                input = await sharp(input, { raw: { width, height, channels: 4 } }).rotate(90).toBuffer();
+                [width, height] = [height, width];
             }
 
-            if(options.extrude) {
-                let extrudeImage = img.clone();
-
-                //Render corners
-                extrudeImage.resize(1, 1);
-                extrudeImage.blit(img, 0, 0, 0, 0, 1, 1);
-                extrudeImage.resize(options.extrude, options.extrude);
-                this.buffer.blit(extrudeImage, dx - options.extrude, dy - options.extrude, 0, 0, options.extrude, options.extrude);
-
-                extrudeImage.resize(1, 1);
-                extrudeImage.blit(img, 0, 0, ow-1, 0, 1, 1);
-                extrudeImage.resize(options.extrude, options.extrude);
-                this.buffer.blit(extrudeImage, dx + sw, dy - options.extrude, 0, 0, options.extrude, options.extrude);
-
-                extrudeImage.resize(1, 1);
-                extrudeImage.blit(img, 0, 0, 0, oh-1, 1, 1);
-                extrudeImage.resize(options.extrude, options.extrude);
-                this.buffer.blit(extrudeImage, dx - options.extrude, dy + sh, 0, 0, options.extrude, options.extrude);
-
-                extrudeImage.resize(1, 1);
-                extrudeImage.blit(img, 0, 0, ow-1, oh-1, 1, 1);
-                extrudeImage.resize(options.extrude, options.extrude);
-                this.buffer.blit(extrudeImage, dx + sw, dy + sh, 0, 0, options.extrude, options.extrude);
-
-                //Render borders
-                extrudeImage.resize(1, sh);
-                extrudeImage.blit(img, 0, 0, 0, sy, 1, sh);
-                extrudeImage.resize(options.extrude, sh);
-                this.buffer.blit(extrudeImage, dx - options.extrude, dy, 0, 0, options.extrude, sh);
-
-                extrudeImage.resize(1, sh);
-                extrudeImage.blit(img, 0, 0, ow-1, sy, 1, sh);
-                extrudeImage.resize(options.extrude, sh);
-                this.buffer.blit(extrudeImage, dx + sw, dy, 0, 0, options.extrude, sh);
-
-                extrudeImage.resize(sw, 1);
-                extrudeImage.blit(img, 0, 0, sx, 0, sw, 1);
-                extrudeImage.resize(sw, options.extrude);
-                this.buffer.blit(extrudeImage, dx, dy - options.extrude, 0, 0, sw, options.extrude);
-
-                extrudeImage.resize(sw, 1);
-                extrudeImage.blit(img, 0, 0, sx, oh-1, sw, 1);
-                extrudeImage.resize(sw, options.extrude);
-                this.buffer.blit(extrudeImage, dx, dy + sh, 0, 0, sw, options.extrude);
-            }
-
-            this.buffer.blit(img, dx, dy, sx, sy, sw, sh);
+            return { input, left, top, raw: { width, height, channels: 4 } };
         }
     }
 }

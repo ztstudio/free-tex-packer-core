@@ -11,6 +11,9 @@ declare module 'free-tex-packer-core' {
   ): Promise<Array<{ name: string, buffer: Buffer }>>;
 }
 
+export default pack;
+export { packAsync };
+
 /**
  * Trim mode for sprites
  *

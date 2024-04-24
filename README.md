@@ -252,7 +252,7 @@ texturePacker(images, {exporter: exporter}, (files, error) => {
 
 # Used libs
 
-* **Jimp** - https://github.com/oliver-moran/jimp
+* **sharp** - https://github.com/lovell/sharp
 * **mustache.js** - https://github.com/janl/mustache.js/
 * **tinify** - https://github.com/tinify/tinify-nodejs
 * **MaxRectsPacker** - https://github.com/soimy/maxrects-packer

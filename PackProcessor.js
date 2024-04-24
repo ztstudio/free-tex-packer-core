@@ -1,8 +1,9 @@
-let MaxRectsBinPack = require('./packers/MaxRectsBin');
-let OptimalPacker = require('./packers/OptimalPacker');
-let allPackers = require('./packers').list;
-let Trimmer = require('./utils/Trimmer');
-let TextureRenderer = require('./utils/TextureRenderer');
+const MaxRectsBinPack = require('./packers/MaxRectsBin');
+const OptimalPacker = require('./packers/OptimalPacker');
+const allPackers = require('./packers').list;
+const Trimmer = require('./utils/Trimmer');
+const TextureRenderer = require('./utils/TextureRenderer');
+const sharp = require('sharp');
 
 class PackProcessor {
 
@@ -12,9 +13,11 @@ class PackProcessor {
 
         for (let i = 0; i < rects.length; i++) {
             let rect1 = rects[i];
+            rect1._base64 ||= rect1.image.toString('base64');
             for (let n = i + 1; n < rects.length; n++) {
                 let rect2 = rects[n];
-                if (rect1.image._base64 == rect2.image._base64 && identical.indexOf(rect2) < 0) {
+                rect2._base64 ||= rect2.image.toString('base64');
+                if (rect1._base64 == rect2._base64 && identical.indexOf(rect2) < 0) {
                     rect2.identical = rect1;
                     identical.push(rect2);
                 }
@@ -63,10 +66,14 @@ class PackProcessor {
         return rects;
     }
 
-    static pack(images = {}, options = {}, onComplete = null, onError = null) {
-
+    /**
+     * 
+     * @param {sharp.Sharp[]} images 
+     * @param {sharp.SharpOptions} options 
+     * @returns 
+     */
+    static async pack(images = [], options = {}) {
         let rects = [];
-
         let padding = options.padding || 0;
         let extrude = options.extrude || 0;
 
@@ -76,11 +83,10 @@ class PackProcessor {
         let alphaThreshold = options.alphaThreshold || 0;
         if (alphaThreshold > 255) alphaThreshold = 255;
 
-        let names = Object.keys(images).sort();
-
-        for (let key of names) {
-            let img = images[key];
-
+        for (let img of images) {
+            let meta = await img.metadata();
+            img.width = meta.width;
+            img.height = meta.height;
             maxWidth += img.width;
             maxHeight += img.height;
 
@@ -93,7 +99,7 @@ class PackProcessor {
                 trimmed: false,
                 spriteSourceSize: { x: 0, y: 0, w: img.width, h: img.height },
                 sourceSize: { w: img.width, h: img.height },
-                name: key,
+                name: img.name,
                 image: img
             });
         }
@@ -119,17 +125,15 @@ class PackProcessor {
         }
 
         if (width < minWidth || height < minHeight) {
-            if (onError) onError({
-                description: "Invalid size. Min: " + minWidth + "x" + minHeight
-            });
-            return;
+            throw "Invalid size. Min: " + minWidth + "x" + minHeight;
         }
 
         if (options.allowTrim) {
-            Trimmer.trim(rects, alphaThreshold);
+            await Trimmer.trim(rects, alphaThreshold);
         }
 
         for (let item of rects) {
+            item.image = item.buffer || await item.image.raw().toBuffer(); // 把sharp转成buffer
             item.frame.w += padding * 2 + extrude * 2;
             item.frame.h += padding * 2 + extrude * 2;
         }
@@ -228,10 +232,7 @@ class PackProcessor {
                 optimalEfficiency = efficiency;
             }
         }
-
-        if (onComplete) {
-            onComplete(optimalRes);
-        }
+        return optimalRes;
     }
 
     static removeRect(rects, name) {
